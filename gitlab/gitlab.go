@@ -16,58 +16,56 @@ import (
 
 const (
 	accessTokenKey = "accessToken"
-	usernameKey    = "username"
-	acceptType     = "application/vnd.github.wyandotte-preview+json"
-	urlKey         = "url"
+	url            = "https://gitlab.com"
 )
 
 var (
-	accessToken, username string
+	accessToken = ""
+	groupID     = 0
+	projectID   = 0
 )
 
-func flags() (string, string, string) {
-	var url string
+func flags() {
 	flag.StringVar(&accessToken, accessTokenKey, "", "access token of github account")
-	flag.StringVar(&username, usernameKey, "", "username of github account")
-	flag.StringVar(&url, urlKey, "", "url to github repo")
+	flag.IntVar(&groupID, "groupID", groupID, "group.id ")
+	flag.IntVar(&projectID, "projectID", projectID, "project.id")
 	flag.Parse()
 
-	if accessToken == "" || username == "" || url == "" {
-		log.Fatal("provide username and password of backup-user and url to repo")
+	if accessToken == "" || (projectID == 0 && groupID == 0) {
+		log.Fatal("provide private token of backup-user and projectID or groupID")
 	}
-
-	return accessToken, username, url
 }
 
 //main exports yabs
 func main() {
-	accessToken, username, url := flags()
-	DoExport(accessToken, username, url)
+	flags()
+	DoExport()
 }
 
-func DoExport(accessToken, username, url string) {
+func DoExport() {
 	client := &http.Client{}
 
-	repos, err := getRepos(client, url)
+	repos, err := getRepos(client)
 	if err != nil {
 		log.Fatalf("repo-check failed: %v", err)
 	}
-	migrationID, err := startBackup(client, url, repos)
+	migrationID, err := startBackup(client, repos)
 	if err != nil {
 		log.Fatalf("create backup failed: %v", err)
 	}
-	if err = awaitBackup(client, url, migrationID); err != nil {
+
+	if err = awaitBackup(client, migrationID); err != nil {
 		log.Fatalf("await backup failed: %v", err)
 	}
 
 	storage := storage.NewStorage()
-	if err = downloadExport(client, url, migrationID, storage); err != nil {
+	if err = downloadExport(client, migrationID, storage); err != nil {
 		log.Fatalf("download backup failed: %v", err)
 	}
 }
 
-func awaitBackup(client *http.Client, url string, migrationID int) error {
-	req, err := util.CreateGETRequest(fmt.Sprintf("%v/migrations/%v", url, migrationID), nil, githubRequest)
+func awaitBackup(client *http.Client, user, password string, migrationID int) error {
+	req, err := util.CreateGETRequest(fmt.Sprintf("%v/migrations/%v", url, migrationID), nil, gitlabRequest)
 	if err != nil {
 		return err
 	}
@@ -86,8 +84,8 @@ func awaitBackup(client *http.Client, url string, migrationID int) error {
 	}
 }
 
-func getRepos(client *http.Client, url string) (Repos, error) {
-	req, err := util.CreateGETRequest(fmt.Sprintf("%v/repos", url), nil, githubRequest)
+func getRepos(client *http.Client) (Repos, error) {
+	req, err := util.CreateGETRequest(fmt.Sprintf("%v/projects", url), nil, gitlabRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -99,13 +97,13 @@ func getRepos(client *http.Client, url string) (Repos, error) {
 	return repos, nil
 }
 
-func startBackup(client *http.Client, url string, repos Repos) (int, error) {
+func startBackup(client *http.Client, repos Repos) (int, error) {
 	repoList := make([]string, 0, len(repos))
 	for _, repo := range repos {
 		repoList = append(repoList, repo.Name)
 	}
 	repositories := &Repositories{Repositories: repoList}
-	req, err := util.CreatePOSTRequest(fmt.Sprintf("%v/migrations", url), repositories, githubRequest)
+	req, err := util.CreatePOSTRequest(fmt.Sprintf("%v/migrations", url), repositories, gitlabRequest)
 	if err != nil {
 		return 0, err
 	}
@@ -114,8 +112,8 @@ func startBackup(client *http.Client, url string, repos Repos) (int, error) {
 	return migrations.ID, err
 }
 
-func downloadExport(client *http.Client, url string, migrationID int, storage storage.Storage) error {
-	req, err := util.CreateGETRequest(fmt.Sprintf("%v/migrations/%v/archive", url, migrationID), nil, githubRequest)
+func downloadExport(client *http.Client, migrationID int, storage storage.Storage) error {
+	req, err := util.CreateGETRequest(fmt.Sprintf("%v/migrations/%v/archive", url, migrationID), nil, gitlabRequest)
 	if err != nil {
 		return err
 	}
